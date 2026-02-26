@@ -18,6 +18,8 @@ class EagleBackbone(torch.nn.Module):
         load_bf16: bool = False,
         tune_top_llm_layers: int = 0,
         trainable_params_fp32: bool = False,
+        use_visual_lora: int = 0,
+        use_llm_lora: int = 0,
         transformers_loading_kwargs: dict = {},
     ):
         """
@@ -26,9 +28,14 @@ class EagleBackbone(torch.nn.Module):
             model_name: nvidia/Eagle-Block2A-2B-v2
             tune_llm: whether to tune the LLM model (default: False)
             tune_visual: whether to tune the visual model (default: False)
+            use_visual_lora: LoRA rank for visual encoder. 0 = disabled.
+            use_llm_lora: LoRA rank for LLM backbone. 0 = disabled.
         """
 
         super().__init__()
+
+        self._use_visual_lora = use_visual_lora > 0
+        self._use_llm_lora = use_llm_lora > 0
 
         # Add attention kwargs
         extra_kwargs = {}
@@ -52,6 +59,16 @@ class EagleBackbone(torch.nn.Module):
         while len(self.model.language_model.model.layers) > select_layer:
             self.model.language_model.model.layers.pop(-1)
 
+        # Apply LoRA after layer truncation so adapters are only on layers in use
+        if self._use_visual_lora:
+            self.model.wrap_backbone_lora(
+                r=use_visual_lora, lora_alpha=2 * use_visual_lora
+            )
+        if self._use_llm_lora:
+            self.model.wrap_llm_lora(
+                r=use_llm_lora, lora_alpha=2 * use_llm_lora
+            )
+
         self.select_layer = select_layer
         self.set_trainable_parameters(tune_llm, tune_visual, tune_top_llm_layers)
         if load_bf16 and trainable_params_fp32:
@@ -67,10 +84,19 @@ class EagleBackbone(torch.nn.Module):
         for p in self.parameters():
             p.requires_grad = True
         if not tune_llm:
-            self.model.language_model.requires_grad_(False)
+            if self._use_llm_lora:
+                for name, p in self.model.language_model.named_parameters():
+                    p.requires_grad = "lora_" in name
+            else:
+                self.model.language_model.requires_grad_(False)
         if not tune_visual:
-            self.model.vision_model.requires_grad_(False)
-            self.model.mlp1.requires_grad_(False)
+            if self._use_visual_lora:
+                for name, p in self.model.vision_model.named_parameters():
+                    p.requires_grad = "lora_" in name
+                self.model.mlp1.requires_grad_(False)
+            else:
+                self.model.vision_model.requires_grad_(False)
+                self.model.mlp1.requires_grad_(False)
 
         if tune_top_llm_layers > 0:
             for layer in self.model.language_model.model.layers[-tune_top_llm_layers:]:
@@ -79,7 +105,16 @@ class EagleBackbone(torch.nn.Module):
 
         print(f"Tune backbone llm: {self.tune_llm}")
         print(f"Tune backbone visual: {self.tune_visual}")
-        # Check if any parameters are still trainable. If not, print a warning.
+        if self._use_visual_lora:
+            lora_params = sum(
+                p.numel() for n, p in self.model.vision_model.named_parameters() if "lora_" in n
+            )
+            print(f"Visual encoder LoRA enabled: {lora_params:,} trainable LoRA params")
+        if self._use_llm_lora:
+            lora_params = sum(
+                p.numel() for n, p in self.model.language_model.named_parameters() if "lora_" in n
+            )
+            print(f"LLM backbone LoRA enabled: {lora_params:,} trainable LoRA params")
         for name, p in self.named_parameters():
             if p.requires_grad:
                 print(f"Backbone trainable parameter: {name}")
@@ -91,11 +126,12 @@ class EagleBackbone(torch.nn.Module):
         Huggingface will call model.train() at each training_step. To ensure
         the expected behaviors for modules like dropout, batchnorm, etc., we
         need to call model.eval() for the frozen modules.
+        When LoRA is active, keep the module in train mode so LoRA dropout works.
         """
         if self.training:
-            if self.model.language_model and not self.tune_llm:
+            if self.model.language_model and not self.tune_llm and not self._use_llm_lora:
                 self.model.language_model.eval()
-            if self.model.vision_model and not self.tune_visual:
+            if self.model.vision_model and not self.tune_visual and not self._use_visual_lora:
                 self.model.vision_model.eval()
                 self.model.mlp1.eval()
 

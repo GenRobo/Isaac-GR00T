@@ -64,6 +64,9 @@ if __name__ == "__main__":
 
     config.model.load_bf16 = False
     config.model.reproject_vision = False
+    config.model.use_dit_lora = ft_config.use_dit_lora
+    config.model.use_visual_lora = ft_config.use_visual_lora
+    config.model.use_llm_lora = ft_config.use_llm_lora
     config.model.eagle_collator = True
     config.model.model_name = "nvidia/Eagle-Block2A-2B-v2"
     config.model.backbone_trainable_params_fp32 = True

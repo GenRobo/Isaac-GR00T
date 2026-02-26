@@ -35,7 +35,7 @@ class FinetuneConfig:
     tune_llm: bool = False
     """If True, fine-tune the language model (LLM) backbone during training."""
 
-    tune_visual: bool = False
+    tune_visual: bool = True
     """If True, fine-tune the visual encoder (e.g., ViT or CNN backbone)."""
 
     tune_projector: bool = True
@@ -116,3 +116,12 @@ class FinetuneConfig:
 
     num_shards_per_epoch: int = int(1e5)
     """Number of shards to use for the dataset. reduce this number if vram is limited."""
+
+    use_dit_lora: int = 0
+    """LoRA rank for the DiT attention layers. 0 = disabled. Typical values: 16, 32, 64."""
+
+    use_visual_lora: int = 0
+    """LoRA rank for the visual encoder (SigLIP2) attention layers. 0 = disabled. Typical values: 16, 32, 64."""
+
+    use_llm_lora: int = 0
+    """LoRA rank for the LLM backbone (Qwen2) attention and MLP layers. 0 = disabled. Typical values: 16, 32, 64."""

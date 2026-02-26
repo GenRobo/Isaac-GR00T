@@ -83,9 +83,26 @@ class Gr00tN1d6ActionHead(nn.Module):
 
         self.beta_dist = Beta(config.noise_beta_alpha, config.noise_beta_beta)
         self.num_timestep_buckets = config.num_timestep_buckets
+        self._use_dit_lora = getattr(config, "use_dit_lora", 0) > 0
+
+        if self._use_dit_lora:
+            self._wrap_dit_lora(r=config.use_dit_lora, lora_alpha=2 * config.use_dit_lora)
+
         self.set_trainable_parameters(
             config.tune_projector, config.tune_diffusion_model, config.tune_vlln
         )
+
+    def _wrap_dit_lora(self, r: int = 32, lora_alpha: int = 64, lora_dropout: float = 0.05):
+        from peft import LoraConfig, get_peft_model
+
+        lora_config = LoraConfig(
+            r=r,
+            target_modules=["to_q", "to_k", "to_v", "to_out.0"],
+            lora_alpha=lora_alpha,
+            lora_dropout=lora_dropout,
+        )
+        self.model = get_peft_model(self.model, lora_config)
+        self.model.print_trainable_parameters()
 
     def set_trainable_parameters(
         self, tune_projector: bool, tune_diffusion_model: bool, tune_vlln: bool
@@ -104,14 +121,20 @@ class Gr00tN1d6ActionHead(nn.Module):
             if self.state_dropout_prob > 0:
                 self.mask_token.requires_grad_(False)
         if not tune_diffusion_model:
-            self.model.requires_grad_(False)
+            if self._use_dit_lora:
+                for name, p in self.model.named_parameters():
+                    p.requires_grad = "lora_" in name
+            else:
+                self.model.requires_grad_(False)
         if not tune_vlln:
             self.vlln.requires_grad_(False)
         print(f"Tune action head projector: {self.tune_projector}")
         print(f"Tune action head diffusion model: {self.tune_diffusion_model}")
         print(f"Tune action head vlln: {self.tune_vlln}")
-        # Check if any parameters are still trainable. If not, print a warning.
-        if not tune_projector and not tune_diffusion_model and not tune_vlln:
+        if self._use_dit_lora:
+            lora_params = sum(p.numel() for n, p in self.model.named_parameters() if "lora_" in n)
+            print(f"DiT LoRA enabled: {lora_params:,} trainable LoRA params")
+        if not tune_projector and not tune_diffusion_model and not tune_vlln and not self._use_dit_lora:
             for name, p in self.named_parameters():
                 if p.requires_grad:
                     print(f"Action head trainable parameter: {name}")
@@ -131,7 +154,7 @@ class Gr00tN1d6ActionHead(nn.Module):
                 self.action_decoder.eval()
                 if self.config.add_pos_embed:
                     self.position_embedding.eval()
-            if not self.tune_diffusion_model:
+            if not self.tune_diffusion_model and not self._use_dit_lora:
                 self.model.eval()
 
     def sample_time(self, batch_size, device, dtype):
@@ -448,6 +471,8 @@ class Gr00tN1d6(PreTrainedModel):
             load_bf16=config.load_bf16,
             tune_top_llm_layers=config.tune_top_llm_layers,
             trainable_params_fp32=config.backbone_trainable_params_fp32,
+            use_visual_lora=getattr(config, "use_visual_lora", 0),
+            use_llm_lora=getattr(config, "use_llm_lora", 0),
             transformers_loading_kwargs=transformers_loading_kwargs,
         )
 

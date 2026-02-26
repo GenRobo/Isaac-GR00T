@@ -97,6 +97,30 @@ def warn_configs(config: Config):
         )
 
 
+def _print_param_counts(model):
+    """Print parameter counts for major sub-modules of Gr00tN1d6."""
+
+    def count(module):
+        return sum(p.numel() for p in module.parameters())
+
+    backbone = model.backbone.model
+    action_head = model.action_head
+
+    sep = "=" * 60
+    print(sep)
+    print("Model Parameter Counts")
+    print(sep)
+    print(f"  Visual encoder:               {count(backbone.vision_model):>15,}")
+    print(f"  Text encoder:                 {'(integrated into LLM)':>15}")
+    print(f"  LLM:                          {count(backbone.language_model):>15,}")
+    print(f"  Embodiment encoder:           {count(action_head.state_encoder):>15,}")
+    print(f"  Action diffusion transformer: {count(action_head.model):>15,}")
+    print(sep)
+    total = count(model)
+    print(f"  Total:                        {total:>15,}")
+    print(sep)
+
+
 def run(config: Config):
     warn_configs(config)
 
@@ -170,6 +194,8 @@ def run(config: Config):
     pipeline = MODEL_REGISTRY.get(type(config.model))(config, save_cfg_dir)
     pipeline.setup()
     model = pipeline.return_model()
+    if global_rank == 0:
+        _print_param_counts(model)
     train_dataset, eval_dataset = pipeline.return_dataset()
     data_collator = pipeline.return_collator()
     processor = pipeline.return_processor()

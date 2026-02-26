@@ -16,6 +16,7 @@ __pycache__/
 # ML / experiment outputs
 wandb/
 outputs/
+output/
 logs/
 runs/
 out/

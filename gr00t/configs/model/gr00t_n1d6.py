@@ -93,6 +93,9 @@ class Gr00tN1d6Config(PretrainedConfig):
     tune_projector: bool = True
     tune_diffusion_model: bool = True
     tune_vlln: bool = True
+    use_dit_lora: int = 0
+    use_visual_lora: int = 0
+    use_llm_lora: int = 0
 
     # State Augmentation parameters
     state_dropout_prob: float = 0.0  # State dropout probability

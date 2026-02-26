@@ -41,7 +41,7 @@ EMBODIMENT_TAG_TO_PROJECTOR_INDEX = {
     "oxe_google": 0,
     "oxe_widowx": 1,
     "oxe_droid": 16,
-    "new_embodiment": 10,
+    "new_embodiment": 16,  # Reuse oxe_droid slot (joint-space control, similar to UR5e)
 }
 
 
