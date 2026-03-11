@@ -101,7 +101,11 @@ class EagleBackbone(torch.nn.Module):
                 self.model.mlp1.requires_grad_(False)
 
         if tune_top_llm_layers > 0:
-            for layer in self.model.language_model.model.layers[-tune_top_llm_layers:]:
+            # Unwrap PEFT model if LoRA was applied (language_model becomes PeftModel)
+            llm = self.model.language_model
+            if hasattr(llm, 'base_model'):
+                llm = llm.base_model.model  # LoraModel -> underlying CausalLM
+            for layer in llm.model.layers[-tune_top_llm_layers:]:
                 for param in layer.parameters():
                     param.requires_grad = True
 
@@ -112,7 +116,6 @@ class EagleBackbone(torch.nn.Module):
                 p.numel() for n, p in self.model.vision_model.named_parameters() if "lora_" in n
             )
             print(f"Visual encoder LoRA enabled (rank={self._visual_lora_rank}): {lora_params:,} trainable LoRA params")
-            input("DEBUG")
         if self._use_llm_lora:
             lora_params = sum(
                 p.numel() for n, p in self.model.language_model.named_parameters() if "lora_" in n
@@ -121,7 +124,6 @@ class EagleBackbone(torch.nn.Module):
         trainable = sum(p.numel() for p in self.parameters() if p.requires_grad)
         total = sum(p.numel() for p in self.parameters())
         print(f"Backbone trainable params: {trainable:,} / {total:,} ({100 * trainable / total:.2f}%)")
-        input("Press Enter to continue...")
         if trainable == 0:
             print("Warning: No backbone trainable parameters found.")
 
