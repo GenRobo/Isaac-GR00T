@@ -66,6 +66,9 @@ class Gr00tN1d6Pipeline(ModelPipeline):
         # Build transformers loading kwargs from training config
 
         if self.config.training.start_from_checkpoint is not None:
+            # Load pretrained weights WITHOUT LoRA — LoRA wrapping changes key names
+            # (e.g., q_proj.weight -> base_model.model.q_proj.weight) which prevents
+            # the pretrained state dict from loading correctly. We apply LoRA after.
             model, loading_info = AutoModel.from_pretrained(
                 self.config.training.start_from_checkpoint,
                 tune_llm=self.config.model.tune_llm,
@@ -79,6 +82,56 @@ class Gr00tN1d6Pipeline(ModelPipeline):
                 output_loading_info=True,
                 **self.transformers_loading_kwargs,
             )
+
+            # Apply LoRA AFTER loading pretrained weights so base weights are intact
+            use_visual_lora = self.config.model.use_visual_lora
+            use_llm_lora = self.config.model.use_llm_lora
+            use_dit_lora = self.config.model.use_dit_lora
+            if use_visual_lora > 0:
+                model.backbone.model.wrap_backbone_lora(
+                    r=use_visual_lora, lora_alpha=2 * use_visual_lora
+                )
+                model.backbone._use_visual_lora = True
+                model.backbone._visual_lora_rank = use_visual_lora
+                for name, p in model.backbone.model.vision_model.named_parameters():
+                    p.requires_grad = "lora_" in name
+                model.backbone.model.mlp1.requires_grad_(False)
+            if use_llm_lora > 0:
+                model.backbone.model.wrap_llm_lora(
+                    r=use_llm_lora, lora_alpha=2 * use_llm_lora
+                )
+                model.backbone._use_llm_lora = True
+                model.backbone._llm_lora_rank = use_llm_lora
+                for name, p in model.backbone.model.language_model.named_parameters():
+                    p.requires_grad = "lora_" in name
+            if use_dit_lora > 0:
+                model.action_head._wrap_dit_lora(
+                    r=use_dit_lora, lora_alpha=2 * use_dit_lora
+                )
+                for name, p in model.action_head.model.named_parameters():
+                    p.requires_grad = "lora_" in name
+
+            # Persist LoRA settings in model config so they're saved to config.json
+            model.config.use_visual_lora = use_visual_lora
+            model.config.use_llm_lora = use_llm_lora
+            model.config.use_dit_lora = use_dit_lora
+
+            # Print LoRA summary
+            if use_visual_lora > 0:
+                lora_params = sum(p.numel() for n, p in model.backbone.model.vision_model.named_parameters() if "lora_" in n)
+                print(f"Visual encoder LoRA applied post-load (rank={use_visual_lora}): {lora_params:,} trainable LoRA params")
+            if use_llm_lora > 0:
+                lora_params = sum(p.numel() for n, p in model.backbone.model.language_model.named_parameters() if "lora_" in n)
+                print(f"LLM backbone LoRA applied post-load (rank={use_llm_lora}): {lora_params:,} trainable LoRA params")
+            if use_dit_lora > 0:
+                lora_params = sum(p.numel() for n, p in model.action_head.model.named_parameters() if "lora_" in n)
+                print(f"DiT LoRA applied post-load (rank={use_dit_lora}): {lora_params:,} trainable LoRA params")
+            input("LORA Trainable Params")
+            # Cast newly added LoRA params to fp32 if needed
+            if self.config.model.backbone_trainable_params_fp32:
+                for n, p in model.named_parameters():
+                    if p.requires_grad and "lora_" in n and p.dtype != torch.float32:
+                        p.data = p.data.to(torch.float32)
 
             # Initialize mask_tokens if they are not present in the base checkpoint
             missing_keys = loading_info.get("missing_keys", [])

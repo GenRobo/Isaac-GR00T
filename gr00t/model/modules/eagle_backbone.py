@@ -36,6 +36,8 @@ class EagleBackbone(torch.nn.Module):
 
         self._use_visual_lora = use_visual_lora > 0
         self._use_llm_lora = use_llm_lora > 0
+        self._visual_lora_rank = use_visual_lora
+        self._llm_lora_rank = use_llm_lora
 
         # Add attention kwargs
         extra_kwargs = {}
@@ -109,16 +111,18 @@ class EagleBackbone(torch.nn.Module):
             lora_params = sum(
                 p.numel() for n, p in self.model.vision_model.named_parameters() if "lora_" in n
             )
-            print(f"Visual encoder LoRA enabled: {lora_params:,} trainable LoRA params")
+            print(f"Visual encoder LoRA enabled (rank={self._visual_lora_rank}): {lora_params:,} trainable LoRA params")
+            input("DEBUG")
         if self._use_llm_lora:
             lora_params = sum(
                 p.numel() for n, p in self.model.language_model.named_parameters() if "lora_" in n
             )
-            print(f"LLM backbone LoRA enabled: {lora_params:,} trainable LoRA params")
-        for name, p in self.named_parameters():
-            if p.requires_grad:
-                print(f"Backbone trainable parameter: {name}")
-        if not any(p.requires_grad for p in self.parameters()):
+            print(f"LLM backbone LoRA enabled (rank={self._llm_lora_rank}): {lora_params:,} trainable LoRA params")
+        trainable = sum(p.numel() for p in self.parameters() if p.requires_grad)
+        total = sum(p.numel() for p in self.parameters())
+        print(f"Backbone trainable params: {trainable:,} / {total:,} ({100 * trainable / total:.2f}%)")
+        input("Press Enter to continue...")
+        if trainable == 0:
             print("Warning: No backbone trainable parameters found.")
 
     def set_frozen_modules_to_eval_mode(self):

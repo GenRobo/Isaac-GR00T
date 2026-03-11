@@ -10,13 +10,72 @@ from typing import Any
 
 import numpy as np
 import torch
-from transformers import AutoModel, AutoProcessor
+from transformers import AutoConfig, AutoModel, AutoProcessor
 
 from gr00t.data.embodiment_tags import EmbodimentTag
 from gr00t.data.interfaces import BaseProcessor
 from gr00t.data.types import MessageType, ModalityConfig, VLAStepData
 
 from .policy import BasePolicy, PolicyWrapper
+
+
+def _infer_lora_ranks_from_checkpoint(model_dir: Path) -> dict[str, int]:
+    """Infer LoRA ranks by inspecting checkpoint weight keys.
+
+    Reads the safetensors index (if present) and finds lora_A weight tensors
+    whose first dimension equals the LoRA rank. Returns a dict with keys
+    ``use_visual_lora``, ``use_llm_lora``, and ``use_dit_lora``.
+    """
+    import json
+
+    index_path = model_dir / "model.safetensors.index.json"
+    if not index_path.exists():
+        # Single-shard checkpoint — read key names directly from the shard
+        shard_path = model_dir / "model.safetensors"
+        if not shard_path.exists():
+            return {}
+        try:
+            from safetensors import safe_open
+
+            with safe_open(str(shard_path), framework="pt", device="cpu") as f:
+                weight_map = {k: str(shard_path) for k in f.keys()}
+        except Exception:
+            return {}
+    else:
+        with open(index_path) as fh:
+            weight_map: dict[str, str] = json.load(fh)["weight_map"]
+
+    # Identify one representative lora_A key per component type and read its rank
+    # Visual encoder keys contain "vision_model" and "lora_A"
+    # LLM keys contain "language_model" (or "llm") and "lora_A"
+    # DiT keys contain "action_head" or "transformer_blocks" and "lora_A"
+    visual_key = next(
+        (k for k in weight_map if "vision_model" in k and "lora_A" in k), None
+    )
+    llm_key = next(
+        (k for k in weight_map if "language_model" in k and "lora_A" in k), None
+    )
+    dit_key = next(
+        (k for k in weight_map if "action_head" in k and "lora_A" in k), None
+    )
+
+    def _read_rank(key: str | None) -> int:
+        if key is None:
+            return 0
+        shard_file = model_dir / weight_map[key]
+        try:
+            from safetensors import safe_open
+
+            with safe_open(str(shard_file), framework="pt", device="cpu") as f:
+                return f.get_tensor(key).shape[0]
+        except Exception:
+            return 0
+
+    return {
+        "use_visual_lora": _read_rank(visual_key),
+        "use_llm_lora": _read_rank(llm_key),
+        "use_dit_lora": _read_rank(dit_key),
+    }
 
 
 def _rec_to_dtype(x: Any, dtype: torch.dtype) -> Any:
@@ -78,8 +137,19 @@ class Gr00tPolicy(BasePolicy):
         super().__init__(strict=strict)
         model_dir = Path(model_path)
 
+        # Load config and patch missing LoRA rank fields by auto-detecting from
+        # checkpoint weights.  Older checkpoints may have been saved without these
+        # fields even though the weights contain LoRA layers.
+        config = AutoConfig.from_pretrained(model_dir)
+        lora_fields = ("use_visual_lora", "use_llm_lora", "use_dit_lora")
+        if any(not hasattr(config, f) for f in lora_fields):
+            detected = _infer_lora_ranks_from_checkpoint(model_dir)
+            for field, value in detected.items():
+                if not hasattr(config, field):
+                    setattr(config, field, value)
+
         # Load the pretrained model and move to target device with bfloat16 precision
-        model = AutoModel.from_pretrained(model_dir)
+        model = AutoModel.from_pretrained(model_dir, config=config)
         model.eval()  # Set model to evaluation mode
         model.to(device=device, dtype=torch.bfloat16)
         self.model = model

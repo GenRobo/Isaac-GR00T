@@ -21,7 +21,7 @@ ur5e_config = {
         ],
     ),
     "action": ModalityConfig(
-        delta_indices=list(range(0, 16)),
+        delta_indices=list(range(0, 50)),
         modality_keys=[
             "single_arm",
             "gripper",

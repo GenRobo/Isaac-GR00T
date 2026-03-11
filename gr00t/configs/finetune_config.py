@@ -125,3 +125,6 @@ class FinetuneConfig:
 
     use_llm_lora: int = 0
     """LoRA rank for the LLM backbone (Qwen2) attention and MLP layers. 0 = disabled. Typical values: 16, 32, 64."""
+
+    action_horizon: int = 16
+    """Number of future action timesteps the model predicts. Default: 16."""

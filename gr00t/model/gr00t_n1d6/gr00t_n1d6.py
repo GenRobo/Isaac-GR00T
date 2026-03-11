@@ -133,12 +133,12 @@ class Gr00tN1d6ActionHead(nn.Module):
         print(f"Tune action head vlln: {self.tune_vlln}")
         if self._use_dit_lora:
             lora_params = sum(p.numel() for n, p in self.model.named_parameters() if "lora_" in n)
-            print(f"DiT LoRA enabled: {lora_params:,} trainable LoRA params")
-        if not tune_projector and not tune_diffusion_model and not tune_vlln and not self._use_dit_lora:
-            for name, p in self.named_parameters():
-                if p.requires_grad:
-                    print(f"Action head trainable parameter: {name}")
-        if not any(p.requires_grad for p in self.parameters()):
+            print(f"DiT LoRA enabled (rank={config.use_dit_lora}): {lora_params:,} trainable LoRA params")
+        trainable = sum(p.numel() for p in self.parameters() if p.requires_grad)
+        total = sum(p.numel() for p in self.parameters())
+        print(f"Action head trainable params: {trainable:,} / {total:,} ({100 * trainable / total:.2f}%)")
+        input("Press Enter to continue...")
+        if trainable == 0:
             print("Warning: No action head trainable parameters found.")
 
     def set_frozen_modules_to_eval_mode(self):
